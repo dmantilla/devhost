@@ -35,20 +35,56 @@ http://agency.test/
 
 ## Config
 
+Start with the smallest config: map each local hostname to the port where
+the app is already running.
+
 ```toml
+[[routes]]
+host = "agency.test"
+port = 2000
+```
+
+Devhost listens on `127.0.0.1:80` by default, uses the `.test` TLD, and
+configures DNS to point matching hostnames back at `127.0.0.1`.
+
+## Advanced Config
+
+Most projects should not need these values. They are available when your local
+networking setup differs from the defaults.
+
+```toml
+# Where the Devhost HTTP proxy listens.
+#
+# The default gives clean URLs like http://agency.test/.
+# Use 127.0.0.1:8080 if you want to avoid sudo while testing.
+# Use 0.0.0.0:80 only if you intentionally want LAN devices to reach Devhost.
 listen = "127.0.0.1:80"
 
 [dns]
+
+# Local-only TLD managed by dnsmasq.
+# The default is "test", which is reserved for testing.
 tld = "test"
+
+# IP address returned by dnsmasq for *.test names.
+# 127.0.0.1 keeps browser traffic on this machine.
 loopback_ip = "127.0.0.1"
+
+# Homebrew dnsmasq include file managed by Devhost.
 dnsmasq_config_path = "/opt/homebrew/etc/dnsmasq.d/devhost.conf"
+
+# Main dnsmasq config where Devhost ensures the include directory is loaded.
 dnsmasq_conf_path = "/opt/homebrew/etc/dnsmasq.conf"
+
+# macOS resolver file for the configured TLD.
 resolver_path = "/etc/resolver/test"
 
 [[routes]]
 host = "agency.test"
-target = "http://127.0.0.1:2000"
+port = 2000
 ```
+
+Each route points to an HTTP app running on `127.0.0.1:<port>`.
 
 ## Commands
 
@@ -105,13 +141,17 @@ sudo target/debug/devhost uninstall-dns --config devhost.toml
 sudo brew services restart dnsmasq
 ```
 
-With `listen = "127.0.0.1:80"`, DNS lets you use clean local URLs:
+With the default listener on port `80`, DNS lets you use clean local URLs:
 
 ```txt
 http://agency.test/
 ```
 
-Port `80` is privileged on macOS, so the proxy must be started with sudo or later installed as a service.
+Port `80` is privileged on macOS, so the proxy must be started with sudo or later installed as a service. If you change `listen` to a different port, include that port in the URL:
+
+```txt
+http://agency.test:8080/
+```
 
 ## Testing With `/etc/hosts`
 
@@ -128,3 +168,11 @@ http://agency.test/
 ```
 
 `/etc/hosts` does not support wildcards. Wildcard domains like `*.agency.test` need the dnsmasq setup above.
+
+## Caveats
+
+- `127.0.0.1` means traffic stays on your own machine. Binding Devhost to `0.0.0.0` can expose local apps to other devices on your network.
+- `.test` is reserved for testing and is safer than inventing a real-looking TLD.
+- DNS changes require restarting dnsmasq. Some browsers and system services may also cache old DNS answers briefly.
+- `/etc/hosts` supports exact names only. Wildcard domains require dnsmasq.
+- Devhost proxies HTTP local apps. It does not terminate HTTPS.

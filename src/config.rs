@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 use crate::errors::{DevhostError, Result};
 
-const DEFAULT_LISTEN: &str = "127.0.0.1:8080";
+const DEFAULT_LISTEN: &str = "127.0.0.1:80";
 const DEFAULT_DNS_TLD: &str = "test";
 const DEFAULT_DNS_LOOPBACK_IP: &str = "127.0.0.1";
 const DEFAULT_DNSMASQ_CONFIG_PATH: &str = "/opt/homebrew/etc/dnsmasq.d/devhost.conf";
@@ -49,7 +49,7 @@ struct RawConfig {
 #[derive(Debug, Deserialize)]
 struct RawRoute {
     host: String,
-    target: String,
+    port: u16,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,7 +97,7 @@ impl Config {
 
         for route in raw.routes {
             let host = normalize_host(&route.host)?;
-            let target = validate_target(&route.target)?;
+            let target = target_from_port(route.port)?;
 
             if !host.starts_with("*.") && !exact_hosts.insert(host.clone()) {
                 return Err(DevhostError::InvalidConfig(format!(
@@ -187,21 +187,14 @@ fn normalize_host(host: &str) -> Result<String> {
     Ok(host)
 }
 
-fn validate_target(target: &str) -> Result<Uri> {
-    if !target.starts_with("http://") {
+fn target_from_port(port: u16) -> Result<Uri> {
+    if port == 0 {
         return Err(DevhostError::InvalidConfig(format!(
-            "route target `{target}` must start with `http://`"
+            "route port `{port}` must be between 1 and 65535"
         )));
     }
 
-    let uri = target.parse::<Uri>()?;
-    if uri.scheme_str() != Some("http") || uri.authority().is_none() {
-        return Err(DevhostError::InvalidConfig(format!(
-            "route target `{target}` must include an http scheme and authority"
-        )));
-    }
-
-    Ok(uri)
+    Ok(format!("http://127.0.0.1:{port}").parse::<Uri>()?)
 }
 
 fn validate_tld(tld: &str) -> Result<String> {
@@ -232,13 +225,17 @@ mod tests {
             r#"
             [[routes]]
             host = "app.test"
-            target = "http://127.0.0.1:2000"
+            port = 2000
             "#,
         )
         .unwrap();
 
         assert_eq!(config.listen.to_string(), DEFAULT_LISTEN);
         assert_eq!(config.routes[0].host, "app.test");
+        assert_eq!(
+            config.routes[0].target.to_string(),
+            "http://127.0.0.1:2000/"
+        );
         assert_eq!(config.dns.tld, "test");
         assert_eq!(config.dns.loopback_ip.to_string(), "127.0.0.1");
     }
@@ -249,7 +246,7 @@ mod tests {
             r#"
             [[routes]]
             host = "*.app.test"
-            target = "http://127.0.0.1:2000"
+            port = 2000
             "#,
         )
         .unwrap();
@@ -263,11 +260,11 @@ mod tests {
             r#"
             [[routes]]
             host = "app.test"
-            target = "http://127.0.0.1:2000"
+            port = 2000
 
             [[routes]]
             host = "APP.test"
-            target = "http://127.0.0.1:3000"
+            port = 3000
             "#,
         )
         .unwrap_err();
@@ -281,7 +278,7 @@ mod tests {
             r#"
             [[routes]]
             host = "api.*.test"
-            target = "http://127.0.0.1:2000"
+            port = 2000
             "#,
         )
         .unwrap_err();
@@ -290,23 +287,51 @@ mod tests {
     }
 
     #[test]
-    fn rejects_target_without_http_scheme() {
+    fn rejects_missing_port() {
         let err = Config::from_toml_str(
             r#"
             [[routes]]
             host = "app.test"
-            target = "127.0.0.1:2000"
+            target = "http://127.0.0.1:2000"
             "#,
         )
         .unwrap_err();
 
-        assert!(err.to_string().contains("must start with `http://`"));
+        assert!(err.to_string().contains("missing field `port`"));
+    }
+
+    #[test]
+    fn rejects_zero_port() {
+        let err = Config::from_toml_str(
+            r#"
+            [[routes]]
+            host = "app.test"
+            port = 0
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("between 1 and 65535"));
+    }
+
+    #[test]
+    fn rejects_port_over_range() {
+        assert!(Config::from_toml_str(
+            r#"
+            [[routes]]
+            host = "app.test"
+            port = 70000
+            "#,
+        )
+        .is_err());
     }
 
     #[test]
     fn accepts_custom_dns_config() {
         let config = Config::from_toml_str(
             r#"
+            listen = "127.0.0.1:8080"
+
             [dns]
             tld = "localhost"
             loopback_ip = "127.0.0.1"
@@ -317,6 +342,7 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(config.listen.to_string(), "127.0.0.1:8080");
         assert_eq!(config.dns.tld, "localhost");
         assert_eq!(
             config.dns.dnsmasq_config_path,

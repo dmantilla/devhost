@@ -1,12 +1,3 @@
-listen = "127.0.0.1:80"
-
-[dns]
-tld = "test"
-loopback_ip = "127.0.0.1"
-dnsmasq_config_path = "/opt/homebrew/etc/dnsmasq.d/devhost.conf"
-dnsmasq_conf_path = "/opt/homebrew/etc/dnsmasq.conf"
-resolver_path = "/etc/resolver/test"
-
 [[routes]]
 host = "agency.test"
-target = "http://127.0.0.1:2000"
+port = 2000
